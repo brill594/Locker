@@ -35,7 +35,8 @@ object ShizukuHelper {
         runShellCommand(cmd)
     }
     fun setHomeRole(packageName: String) {
-
+        val cmd1 = "cmd role clear-role-holders android.app.role.HOME"
+        runShellCommand(cmd1)
         val cmd = "cmd role add-role-holder android.app.role.HOME $packageName"
         runShellCommand(cmd)
     }

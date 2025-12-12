@@ -153,10 +153,8 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
                 // 1. 归还名分 (Role + Activity)
                 // 先给 Role (Android 15 认这个)
                 // 再设 Default (双保险)
-                ShizukuHelper.setDeviceLauncher(originalPkg, originalCls)
                 ShizukuHelper.setHomeRole(originalPkg)
-                // 2. 扶持上位 (AM START)
-                ShizukuHelper.forceStartHome(originalPkg, originalCls)
+                ShizukuHelper.setDeviceLauncher(originalPkg, originalCls)
 
                 Toast.makeText(context, "已恢复: $originalPkg", Toast.LENGTH_SHORT).show()
             } else {
@@ -165,7 +163,6 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
                 val msCls = "com.android.launcher.Launcher"
                 ShizukuHelper.setHomeRole(msPkg)
                 ShizukuHelper.setDeviceLauncher(msPkg, msCls)
-                ShizukuHelper.forceStartHome(msPkg, msCls)
                 Toast.makeText(context, "执行兜底恢复", Toast.LENGTH_SHORT).show()
             }
             // 彻底移除 forceReleaseLauncher (禁用自己)
