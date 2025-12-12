@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -33,40 +34,39 @@ import rikka.shizuku.Shizuku
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
+
+// 定义主题颜色
+val ColorBackground = Color(0xFFFFF0F5) // 极淡的樱花粉背景
+val ColorMainPink = Color(0xFFFF8DA1)   // 主题桃粉色 (标题、按钮)
+val ColorLightPink = Color(0xFFFFB7C5)  // 浅粉色 (次要按钮)
+val ColorTextPrimary = Color(0xFF5D4037) // 深咖色 (正文文本，比纯黑柔和)
+val ColorTextSecondary = Color(0xFF9E8489) // 灰粉色 (次要文本)
+
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: LockViewModel
 
+    // Fix for Shizuku listener memory leak warning (Implicit SAM conversion)
+    private val shizukuListener = Shizuku.OnRequestPermissionResultListener { _, _ -> }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Shizuku.addRequestPermissionResultListener { _, _ -> }
-
-        // 1. 初始化 ViewModel (这里不做 UI 绑定，只做逻辑)
-        // 注意：在 setContent 内部我们也获取了一次，这里是用成员变量存一下引用
-        // 为了方便在生命周期回调里使用
-
-        // 由于 viewModel() 是 Composable 函数，我们在 onCreate 里不能直接用
-        // 但我们可以通过 ViewModelProvider 获取，或者更简单的：
-        // 让 AppContent 里的 viewModel 传出来，或者直接在这里用 standard way 获取
+        Shizuku.addRequestPermissionResultListener(shizukuListener)
 
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    // 获取实例
+                // 修改背景颜色为粉白
+                Surface(modifier = Modifier.fillMaxSize(), color = ColorBackground) {
                     val vm: LockViewModel = viewModel()
-                    viewModel = vm // 赋值给成员变量
+                    viewModel = vm
 
-                    // 注册看门狗
                     DisposableEffect(Unit) {
                         val observer = LifecycleEventObserver { _, event ->
                             if (event == Lifecycle.Event.ON_STOP) {
-                                // [核心] 当 App 进入后台时 (ON_STOP)
-                                // 如果正在锁定中，立即把它拽回来！
                                 if (vm.isLocked) {
                                     vm.bringAppToFront()
                                 }
                             }
                         }
-                        // 监听整个进程的生命周期，比 Activity 更稳
                         ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
                         onDispose {
                             ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Shizuku.removeRequestPermissionResultListener { _, _ -> }
+        Shizuku.removeRequestPermissionResultListener(shizukuListener)
     }
 }
 
@@ -143,23 +143,33 @@ fun DebugDialog(text: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = Color.White, // 弹窗背景改为纯白
+        titleContentColor = ColorTextPrimary, // FIXED: Correct parameter name (was titleColor)
         title = { Text("执行错误 (Exit Code 255)") },
         text = {
             SelectionContainer {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    Text(text = text, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = Color.Red)
+                    Text(text = text, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = ColorMainPink)
                 }
             }
         },
         confirmButton = {
-            Button(onClick = {
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                val clip = android.content.ClipData.newPlainText("Error Log", text)
-                clipboard.setPrimaryClip(clip)
-                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
-            }) { Text("复制日志") }
+            Button(
+                onClick = {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = android.content.ClipData.newPlainText("Error Log", text)
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = ColorMainPink)
+            ) { Text("复制日志", color = Color.White) }
         },
-        dismissButton = { Button(onClick = onDismiss) { Text("关闭") } }
+        dismissButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = ColorLightPink)
+            ) { Text("关闭", color = Color.White) }
+        }
     )
 }
 
@@ -174,7 +184,7 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
     ) {
         Text(
             text = "LOCKER",
-            color = Color.White,
+            color = ColorMainPink, // 标题改为桃粉色
             fontSize = 40.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
@@ -190,13 +200,14 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
                 onValueChange = { selectedMinutes = it }
             )
             Spacer(modifier = Modifier.width(10.dp))
-            Text(text = "MIN", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text(text = "MIN", color = ColorMainPink, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
 
         Spacer(modifier = Modifier.height(60.dp))
 
         Button(
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD71921)),
+            // 按钮颜色改为桃粉色
+            colors = ButtonDefaults.buttonColors(containerColor = ColorMainPink),
             onClick = { onStart(selectedMinutes) },
             modifier = Modifier.height(50.dp).width(150.dp)
         ) {
@@ -206,11 +217,12 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
         Spacer(modifier = Modifier.height(20.dp))
 
         if (!ShizukuHelper.isShizukuAvailable()) {
-            Text("Shizuku 未连接", color = Color.Gray, fontSize = 12.sp)
+            Text("Shizuku 未连接", color = ColorTextSecondary, fontSize = 12.sp)
         } else if (!ShizukuHelper.checkPermission(0)) {
             Button(
                 onClick = { ShizukuHelper.requestPermission(0) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                // 授权按钮改为浅粉色
+                colors = ButtonDefaults.buttonColors(containerColor = ColorLightPink)
             ) {
                 Text("授权 Shizuku", fontSize = 12.sp, color = Color.White)
             }
@@ -219,7 +231,8 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
         if (!isAccessibilityReady) {
             Button(
                 onClick = { },
-                colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
+                // 按钮改为浅粉色
+                colors = ButtonDefaults.buttonColors(containerColor = ColorLightPink),
                 modifier = Modifier.padding(top = 10.dp)
             ) {
                 val context = LocalContext.current
@@ -229,16 +242,16 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
                 })
             }
         } else {
-            Text("已就绪", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
+            // "已就绪" 改为桃粉色
+            Text("已就绪", color = ColorMainPink, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
         }
 
-        // ⬇️⬇️⬇️ 只有在 Debug 版本才会显示这个按钮 ⬇️⬇️⬇️
         if (BuildConfig.DEBUG) {
             Spacer(modifier = Modifier.height(20.dp))
             val context = LocalContext.current
             Button(
                 onClick = { (context as? MainActivity)?.sendTestNotification() },
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF81D4FA)) // Debug 按钮改成淡蓝色区分
             ) {
                 Text("[DEBUG] 测试通知", color = Color.White)
             }
@@ -252,28 +265,27 @@ fun LockScreen(seconds: Long, onEmergency: () -> Unit) {
     val ss = (seconds % 60).toString().padStart(2, '0')
 
     Column(
-        modifier = Modifier.fillMaxSize().background(Color.Black),
+        // 锁机界面背景也改为粉白
+        modifier = Modifier.fillMaxSize().background(ColorBackground),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = "$mm : $ss", color = Color.White, fontSize = 80.sp, fontWeight = FontWeight.Bold)
-        Text(text = "FOCUS MODE", color = Color.Gray, fontSize = 16.sp, letterSpacing = 4.sp)
+        Text(text = "$mm : $ss", color = ColorMainPink, fontSize = 80.sp, fontWeight = FontWeight.Bold)
+        Text(text = "FOCUS MODE", color = ColorTextSecondary, fontSize = 16.sp, letterSpacing = 4.sp)
 
-        // ⬇️⬇️⬇️ 只有在 Debug 版本才会显示“紧急解锁” ⬇️⬇️⬇️
         if (BuildConfig.DEBUG) {
             Spacer(modifier = Modifier.height(50.dp))
             Button(
                 onClick = onEmergency,
                 colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
             ) {
-                Text("[DEBUG] Emergency Unlock", color = Color.Red, fontSize = 12.sp)
+                Text("[DEBUG] Emergency Unlock", color = ColorLightPink, fontSize = 12.sp)
             }
 
-            // 调试通知按钮
             val context = LocalContext.current
             Button(
                 onClick = { (context as? MainActivity)?.sendTestNotification() },
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF81D4FA))
             ) {
                 Text("[DEBUG] 测试通知", color = Color.White)
             }
@@ -298,7 +310,16 @@ fun WheelPicker(range: IntRange, initialValue: Int, onValueChange: (Int) -> Unit
     }
 
     Box(modifier = Modifier.height(height).width(80.dp), contentAlignment = Alignment.Center) {
-        Box(modifier = Modifier.fillMaxWidth().height(itemHeight).background(Color.DarkGray.copy(alpha = 0.3f)))
+        // 滚轮中间的选中条：改为半透明的粉色，加圆角
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(itemHeight)
+                .background(
+                    color = ColorMainPink.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(12.dp)
+                )
+        )
         LazyColumn(
             state = listState,
             flingBehavior = snapBehavior,
@@ -307,14 +328,20 @@ fun WheelPicker(range: IntRange, initialValue: Int, onValueChange: (Int) -> Unit
         ) {
             item { Spacer(modifier = Modifier.height((height - itemHeight) / 2)) }
             items(range.count()) { index ->
-                Text(
-                    text = (range.first + index).toString(),
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.height(itemHeight),
-                    textAlign = TextAlign.Center
-                )
+                // 使用 Box 包裹 Text 以确保垂直居中
+                Box(
+                    modifier = Modifier.height(itemHeight).fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = (range.first + index).toString(),
+                        // 滚轮数字颜色：改为深咖色，比纯黑更柔和
+                        color = ColorTextPrimary,
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
             item { Spacer(modifier = Modifier.height((height - itemHeight) / 2)) }
         }
