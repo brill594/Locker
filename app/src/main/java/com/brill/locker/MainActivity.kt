@@ -1,8 +1,11 @@
-package com.brill.locker // 确认包名是小写
+package com.brill.locker
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -12,6 +15,9 @@ import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,12 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import rikka.shizuku.Shizuku
-import android.content.ClipboardManager
-import android.content.Context
-import android.widget.Toast
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.selection.SelectionContainer
+import com.brill.locker.BuildConfig
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,43 +41,40 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    // 获取 ViewModel
                     val viewModel: LockViewModel = viewModel()
-                    // 传递给 UI
                     AppContent(viewModel)
                 }
             }
         }
     }
+
     internal fun sendTestNotification() {
         val channelId = "test_channel"
         val nm = getSystemService(android.app.NotificationManager::class.java)
 
-        // 1. 创建一个“极度吵闹”的通知渠道 (Android 8.0+)
         if (nm.getNotificationChannel(channelId) == null) {
             val channel = android.app.NotificationChannel(
                 channelId,
                 "测试噪音通道",
-                android.app.NotificationManager.IMPORTANCE_HIGH // 高优先级：会有声音和悬浮窗
+                android.app.NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "专门用来测试勿扰模式是否生效"
-                enableVibration(true) // 开启震动
+                description = "Debug测试"
+                enableVibration(true)
                 enableLights(true)
             }
             nm.createNotificationChannel(channel)
         }
 
-        // 2. 构建通知
         val notification = android.app.Notification.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert) // 系统自带图标
-            .setContentTitle("勿扰模式测试")
-            .setContentText("如果你听到了声音或看到了弹窗，说明勿扰失败了！")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Debug测试")
+            .setContentText("这是一条测试通知")
             .setAutoCancel(true)
             .build()
 
-        // 3. 发射！
         nm.notify(999, notification)
     }
+
     override fun onDestroy() {
         super.onDestroy()
         Shizuku.removeRequestPermissionResultListener { _, _ -> }
@@ -88,12 +86,14 @@ fun AppContent(viewModel: LockViewModel) {
     val isLocked = viewModel.isLocked
     val timeLeftSeconds = viewModel.timeLeftSeconds
     val isAccessibilityReady = viewModel.isAccessibilityReady
+
     if (viewModel.showDebugDialog) {
         DebugDialog(
             text = viewModel.debugOutput,
             onDismiss = { viewModel.dismissDialog() }
         )
     }
+
     if (!isLocked) {
         SetupScreen(
             onStart = { minutes -> viewModel.startLock(minutes) },
@@ -106,47 +106,32 @@ fun AppContent(viewModel: LockViewModel) {
         )
     }
 }
-// [新增] 一个专门用来显示报错的弹窗
+
 @Composable
 fun DebugDialog(text: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
-
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("执行错误 (Exit Code 255)") },
         text = {
-            // 让文字可以选择复制
             SelectionContainer {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    Text(
-                        text = text,
-                        fontSize = 12.sp,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        color = Color.Red
-                    )
+                    Text(text = text, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, color = Color.Red)
                 }
             }
         },
         confirmButton = {
-            Button(
-                onClick = {
-                    // 复制到剪贴板
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    val clip = android.content.ClipData.newPlainText("Error Log", text)
-                    clipboard.setPrimaryClip(clip)
-                    Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
-                }
-            ) {
-                Text("复制日志")
-            }
+            Button(onClick = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = android.content.ClipData.newPlainText("Error Log", text)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+            }) { Text("复制日志") }
         },
-        dismissButton = {
-            Button(onClick = onDismiss) {
-                Text("关闭")
-            }
-        }
+        dismissButton = { Button(onClick = onDismiss) { Text("关闭") } }
     )
 }
+
 @Composable
 fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
     var selectedMinutes by remember { mutableIntStateOf(10) }
@@ -189,7 +174,6 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // 权限检查区域
         if (!ShizukuHelper.isShizukuAvailable()) {
             Text("Shizuku 未连接", color = Color.Gray, fontSize = 12.sp)
         } else if (!ShizukuHelper.checkPermission(0)) {
@@ -201,17 +185,12 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
             }
         }
 
-        // 无障碍检查区域
         if (!isAccessibilityReady) {
             Button(
-                onClick = {
-                    val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                    // 需要 Context 启动 Activity，这里简化处理，实际可以使用 LocalContext.current
-                },
+                onClick = { },
                 colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray),
                 modifier = Modifier.padding(top = 10.dp)
             ) {
-                // 注意：LocalContext.current 需要在 Composable 内部获取
                 val context = LocalContext.current
                 Text("开启无障碍服务", fontSize = 12.sp, color = Color.White, modifier = Modifier.clickable {
                     val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
@@ -221,18 +200,17 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
         } else {
             Text("已就绪", color = Color.Green, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
         }
-        Spacer(modifier = Modifier.height(20.dp))
 
-        // 测试按钮
-        val context = LocalContext.current
-        Button(
-            onClick = {
-                // 调用 MainActivity 的方法
-                (context as? MainActivity)?.sendTestNotification()
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
-        ) {
-            Text("发送高亮通知测试", color = Color.White)
+        // ⬇️⬇️⬇️ 只有在 Debug 版本才会显示这个按钮 ⬇️⬇️⬇️
+        if (BuildConfig.DEBUG) {
+            Spacer(modifier = Modifier.height(20.dp))
+            val context = LocalContext.current
+            Button(
+                onClick = { (context as? MainActivity)?.sendTestNotification() },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
+            ) {
+                Text("[DEBUG] 测试通知", color = Color.White)
+            }
         }
     }
 }
@@ -249,25 +227,25 @@ fun LockScreen(seconds: Long, onEmergency: () -> Unit) {
     ) {
         Text(text = "$mm : $ss", color = Color.White, fontSize = 80.sp, fontWeight = FontWeight.Bold)
         Text(text = "FOCUS MODE", color = Color.Gray, fontSize = 16.sp, letterSpacing = 4.sp)
-        Spacer(modifier = Modifier.height(100.dp))
-        Button(
-            onClick = onEmergency,
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
-        ) {
-            Text("Emergency Unlock", color = Color.DarkGray, fontSize = 12.sp)
-        }
-        Spacer(modifier = Modifier.height(20.dp))
 
-        // 测试按钮
-        val context = LocalContext.current
-        Button(
-            onClick = {
-                // 调用 MainActivity 的方法
-                (context as? MainActivity)?.sendTestNotification()
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
-        ) {
-            Text("发送高亮通知测试", color = Color.White)
+        // ⬇️⬇️⬇️ 只有在 Debug 版本才会显示“紧急解锁” ⬇️⬇️⬇️
+        if (BuildConfig.DEBUG) {
+            Spacer(modifier = Modifier.height(50.dp))
+            Button(
+                onClick = onEmergency,
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
+            ) {
+                Text("[DEBUG] Emergency Unlock", color = Color.Red, fontSize = 12.sp)
+            }
+
+            // 调试通知按钮
+            val context = LocalContext.current
+            Button(
+                onClick = { (context as? MainActivity)?.sendTestNotification() },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Blue)
+            ) {
+                Text("[DEBUG] 测试通知", color = Color.White)
+            }
         }
     }
 }
