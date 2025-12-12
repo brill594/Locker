@@ -1,20 +1,32 @@
 package com.brill.locker
 
 import android.content.pm.PackageManager
+import android.util.Log
 import rikka.shizuku.Shizuku
 import java.io.BufferedReader
 import java.io.InputStreamReader
 
+// [新增] 用于承载完整 Shell 结果的数据类
+data class ShellResult(
+    val exitCode: Int,
+    val stdout: String,
+    val stderr: String
+) {
+    // 方便打印日志的方法
+    fun isSuccess() = exitCode == 0
+    override fun toString(): String {
+        return "ExitCode: $exitCode\nSTDOUT: $stdout\nSTDERR: $stderr"
+    }
+}
+
 object ShizukuHelper {
 
-    fun isShizukuAvailable(): Boolean {
-        return Shizuku.pingBinder()
-    }
+    private const val TAG = "ShizukuHelper"
+
+    fun isShizukuAvailable(): Boolean = Shizuku.pingBinder()
 
     fun checkPermission(code: Int): Boolean {
-        if (Shizuku.isPreV11() || Shizuku.getVersion() < 11) {
-            return false
-        }
+        if (Shizuku.isPreV11() || Shizuku.getVersion() < 11) return false
         return try {
             Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
         } catch (e: Exception) {
@@ -23,30 +35,47 @@ object ShizukuHelper {
     }
 
     fun requestPermission(code: Int) {
-        if (Shizuku.isPreV11() || Shizuku.getVersion() < 11) {
-            return
-        }
+        if (Shizuku.isPreV11() || Shizuku.getVersion() < 11) return
         Shizuku.requestPermission(code)
     }
 
-    fun forceStartHome(packageName: String, className: String) {
-        // am start -a android.intent.action.MAIN -c android.intent.category.HOME -n 包名/类名
-        val cmd = "am start -a android.intent.action.MAIN -c android.intent.category.HOME -n $packageName/$className"
-        runShellCommand(cmd)
-    }
-    fun setHomeRole(packageName: String) {
-        val cmd1 = "cmd role clear-role-holders android.app.role.HOME"
-        runShellCommand(cmd1)
-        val cmd = "cmd role add-role-holder android.app.role.HOME $packageName"
-        runShellCommand(cmd)
-    }
-    // [原有] 设置默认桌面配置
+    // --- 各种业务命令 ---
+
+    // [修正] 设置 Activity 偏好 (加上 --user 0)
+    // 语法：cmd package set-home-activity [--user USER_ID] TARGET-COMPONENT
     fun setDeviceLauncher(packageName: String, className: String) {
-        val cmd = "cmd package set-home-activity $packageName/$className"
+        val cmd = "cmd package set-home-activity --user 0 $packageName/$className"
         runShellCommand(cmd)
     }
 
-    // --- 修复后的反射逻辑 ---
+    // [保留] 清除默认设置 (同样加上 --user 0 以防万一)
+    fun clearPreferredActivities(packageName: String) {
+        val cmd = "pm clear-package-preferred-activities --user 0 $packageName"
+        runShellCommand(cmd)
+    }
+    fun removeHomeRole(packageName: String) {
+        val cmd = "cmd role remove-role-holder --user 0 android.app.role.HOME $packageName"
+        runShellCommand(cmd)
+    }
+
+    // [修正] 设置角色：把 --user 0 放到 android.app.role.HOME 之前
+    fun setHomeRole(packageName: String) {
+        val cmd = "cmd role add-role-holder --user 0 android.app.role.HOME $packageName"
+        runShellCommand(cmd)
+    }
+
+    fun forceStartHome(packageName: String, className: String) {
+        val cmd = "am start -a android.intent.action.MAIN -c android.intent.category.HOME -n $packageName/$className"
+        runShellCommand(cmd)
+    }
+
+    fun grantNotificationPermission(packageName: String) {
+        val cmd = "cmd appops set $packageName ACCESS_NOTIFICATION_POLICY allow"
+        runShellCommand(cmd)
+    }
+
+    // --- 核心执行模块 (升级版) ---
+
     private fun newProcessCompat(cmd: Array<String>): java.lang.Process? {
         return try {
             val method = Shizuku::class.java.getDeclaredMethod(
@@ -56,42 +85,53 @@ object ShizukuHelper {
                 String::class.java
             )
             method.isAccessible = true
-            // 强转为 java.lang.Process
             method.invoke(null, cmd, null, null) as? java.lang.Process
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e(TAG, "Reflection failed", e)
             null
         }
     }
-    fun setZenMode(mode: Int) {
-        val cmd = "settings put global zen_mode $mode"
-        runShellCommand(cmd)
-    }
-    fun grantNotificationPermission(packageName: String) {
-        // cmd appops set <包名> ACCESS_NOTIFICATION_POLICY allow
-        val cmd = "cmd appops set $packageName ACCESS_NOTIFICATION_POLICY allow"
-        runShellCommand(cmd)
-    }
-    fun runShellCommand(command: String): String {
+
+    // [修改] 返回 ShellResult 而不是 String
+    fun runShellCommand(command: String): ShellResult {
+        Log.d(TAG, "Exec: $command")
         return try {
-            // 明确调用内部的私有方法
             val process = newProcessCompat(arrayOf("sh", "-c", command))
-
-            // 智能转换：如果 process 为空直接返回错误
-            if (process == null) return "Error: Reflection failed"
-
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val output = StringBuilder()
-            var line: String? = reader.readLine()
-            while (line != null) {
-                output.append(line).append("\n")
-                line = reader.readLine()
+            if (process == null) {
+                return ShellResult(-1, "", "Failed to spawn process (reflection error)")
             }
 
-            process.waitFor()
-            "Output:\n$output"
+            // 读取 stdout
+            val stdoutReader = BufferedReader(InputStreamReader(process.inputStream))
+            val stdout = StringBuilder()
+            var line: String?
+            while (stdoutReader.readLine().also { line = it } != null) {
+                stdout.append(line).append("\n")
+            }
+
+            // 读取 stderr (关键！)
+            val stderrReader = BufferedReader(InputStreamReader(process.errorStream))
+            val stderr = StringBuilder()
+            while (stderrReader.readLine().also { line = it } != null) {
+                stderr.append(line).append("\n")
+            }
+
+            // 等待退出码
+            val exitCode = process.waitFor()
+
+            val result = ShellResult(exitCode, stdout.toString().trim(), stderr.toString().trim())
+
+            // 直接在 Logcat 打印结果，方便你调试
+            if (exitCode != 0) {
+                Log.e(TAG, "Command FAILED:\n$result")
+            } else {
+                Log.i(TAG, "Command SUCCESS:\n$result")
+            }
+
+            result
         } catch (e: Exception) {
-            "Error: ${e.message}"
+            Log.e(TAG, "Exception running command", e)
+            ShellResult(-2, "", e.message ?: "Unknown error")
         }
     }
 }

@@ -28,6 +28,10 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
     var isAccessibilityReady by mutableStateOf(false)
         private set
 
+    // 调试弹窗状态
+    var showDebugDialog by mutableStateOf(false)
+    var debugOutput by mutableStateOf("")
+
     private var timerJob: Job? = null
     companion object {
         var isGlobalLocked = false
@@ -63,9 +67,9 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
             val remainingMillis = unlockTimestamp - currentTimestamp
             isLocked = true
             timeLeftSeconds = remainingMillis / 1000
+
             AccessibilityBlocker.isBlocking = true
             isGlobalLocked = true
-
             enableDnd()
             muteAll()
 
@@ -79,26 +83,20 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
         if (minutes <= 0) return
         val context = getApplication<Application>()
 
-        // 1. 保存原来的桌面
         if (!saveOriginalLauncherToPrefs()) {
-            Toast.makeText(context, "无法识别原桌面", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "无法识别原桌面，请先手动设置默认桌面", Toast.LENGTH_LONG).show()
             return
         }
 
         val myPackage = context.packageName
         if (ShizukuHelper.isShizukuAvailable() && ShizukuHelper.checkPermission(0)) {
-            // 2. 将 Locker 设为默认桌面 (双重命令)
-            // 先用 RoleManager (新)
-            ShizukuHelper.setHomeRole(myPackage)
-            // 再用 PreferredActivity (旧) 做兼容
+            // 锁定逻辑：setDeviceLauncher 是最稳的
             ShizukuHelper.setDeviceLauncher(myPackage, "$myPackage.MainActivity")
 
-            // 3. 写入时间
             val unlockTimestamp = System.currentTimeMillis() + (minutes * 60 * 1000)
             val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
             prefs.edit().putLong(KEY_UNLOCK_TIMESTAMP, unlockTimestamp).apply()
 
-            // 4. 开启封锁
             isLocked = true
             AccessibilityBlocker.isBlocking = true
             isGlobalLocked = true
@@ -144,29 +142,57 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         prefs.edit().remove(KEY_UNLOCK_TIMESTAMP).apply()
 
-        // --- 核心恢复逻辑 ---
         val originalPkg = prefs.getString(KEY_PKG, null)
         val originalCls = prefs.getString(KEY_CLS, null)
 
         viewModelScope.launch {
             if (originalPkg != null && originalCls != null) {
-                // 1. 归还名分 (Role + Activity)
-                // 先给 Role (Android 15 认这个)
-                // 再设 Default (双保险)
-                ShizukuHelper.setHomeRole(originalPkg)
-                ShizukuHelper.setDeviceLauncher(originalPkg, originalCls)
+                val myPackage = context.packageName
 
-                Toast.makeText(context, "已恢复: $originalPkg", Toast.LENGTH_SHORT).show()
+                // 1. 清除 Locker 霸权
+                ShizukuHelper.clearPreferredActivities(myPackage)
+
+                // 2. 尝试 A 计划 (Role)
+                val resRole = ShizukuHelper.runShellCommand("cmd role add-role-holder --user 0 android.app.role.HOME $originalPkg")
+
+                if (resRole.exitCode == 0) {
+                    // A 计划成功
+                    ShizukuHelper.forceStartHome(originalPkg, originalCls)
+                    Toast.makeText(context, "恢复成功 (Role)", Toast.LENGTH_SHORT).show()
+                } else {
+                    // 3. A 计划失败，尝试 B 计划 (Set Home Activity)
+                    // 注意：这里调用的是 ShizukuHelper 里修正过带 --user 0 的版本
+                    val resPkg = ShizukuHelper.runShellCommand("cmd package set-home-activity --user 0 $originalPkg/$originalCls")
+
+                    if (resPkg.exitCode == 0) {
+                        // B 计划成功
+                        ShizukuHelper.forceStartHome(originalPkg, originalCls)
+                        Toast.makeText(context, "恢复成功 (Pkg)", Toast.LENGTH_SHORT).show()
+                    } else {
+                        // 4. 【兜底】C 计划：都失败了，跳转系统设置
+                        // 既然脚本无权修改，就带用户去“默认应用设置”页，让他手动点一下
+                        Toast.makeText(context, "自动恢复失败，请手动选择桌面", Toast.LENGTH_LONG).show()
+
+                        try {
+                            val intent = Intent(android.provider.Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            // 极少数系统可能没有这个 Intent，尝试跳主设置页
+                            val intent = Intent(android.provider.Settings.ACTION_SETTINGS)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            context.startActivity(intent)
+                        }
+                    }
+                }
             } else {
-                // 兜底：恢复微软桌面
-                val msPkg = "com.android.launcher"
-                val msCls = "com.android.launcher.Launcher"
-                ShizukuHelper.setHomeRole(msPkg)
-                ShizukuHelper.setDeviceLauncher(msPkg, msCls)
-                Toast.makeText(context, "执行兜底恢复", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "未找到原桌面记录", Toast.LENGTH_SHORT).show()
             }
-            // 彻底移除 forceReleaseLauncher (禁用自己)
         }
+    }
+
+    fun dismissDialog() {
+        showDebugDialog = false
     }
 
     // --- 辅助功能 ---
@@ -189,7 +215,6 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
                     .apply()
                 return true
             } else {
-                // 已经是 Locker 了，信任硬盘里的旧数据
                 val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
                 return prefs.contains(KEY_PKG)
             }
@@ -197,7 +222,7 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
         return false
     }
 
-    // ... (Notification Listener / DND / Volume 代码保持不变) ...
+    // ... (Volume / Notification Listener / DND 代码保持不变) ...
     private fun enableNotificationListener() {
         val myPackage = getApplication<Application>().packageName
         val componentName = "$myPackage/${NotificationBlocker::class.java.name}"

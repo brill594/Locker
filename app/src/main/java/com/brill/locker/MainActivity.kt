@@ -24,6 +24,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import rikka.shizuku.Shizuku
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,7 +88,12 @@ fun AppContent(viewModel: LockViewModel) {
     val isLocked = viewModel.isLocked
     val timeLeftSeconds = viewModel.timeLeftSeconds
     val isAccessibilityReady = viewModel.isAccessibilityReady
-
+    if (viewModel.showDebugDialog) {
+        DebugDialog(
+            text = viewModel.debugOutput,
+            onDismiss = { viewModel.dismissDialog() }
+        )
+    }
     if (!isLocked) {
         SetupScreen(
             onStart = { minutes -> viewModel.startLock(minutes) },
@@ -95,7 +106,47 @@ fun AppContent(viewModel: LockViewModel) {
         )
     }
 }
+// [新增] 一个专门用来显示报错的弹窗
+@Composable
+fun DebugDialog(text: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
 
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("执行错误 (Exit Code 255)") },
+        text = {
+            // 让文字可以选择复制
+            SelectionContainer {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        text = text,
+                        fontSize = 12.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        color = Color.Red
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    // 复制到剪贴板
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    val clip = android.content.ClipData.newPlainText("Error Log", text)
+                    clipboard.setPrimaryClip(clip)
+                    Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                }
+            ) {
+                Text("复制日志")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("关闭")
+            }
+        }
+    )
+}
 @Composable
 fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
     var selectedMinutes by remember { mutableIntStateOf(10) }
