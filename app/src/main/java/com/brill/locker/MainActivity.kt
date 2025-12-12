@@ -30,19 +30,50 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import rikka.shizuku.Shizuku
-import com.brill.locker.BuildConfig
-
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
 class MainActivity : ComponentActivity() {
+    private lateinit var viewModel: LockViewModel
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         Shizuku.addRequestPermissionResultListener { _, _ -> }
+
+        // 1. 初始化 ViewModel (这里不做 UI 绑定，只做逻辑)
+        // 注意：在 setContent 内部我们也获取了一次，这里是用成员变量存一下引用
+        // 为了方便在生命周期回调里使用
+
+        // 由于 viewModel() 是 Composable 函数，我们在 onCreate 里不能直接用
+        // 但我们可以通过 ViewModelProvider 获取，或者更简单的：
+        // 让 AppContent 里的 viewModel 传出来，或者直接在这里用 standard way 获取
 
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-                    val viewModel: LockViewModel = viewModel()
-                    AppContent(viewModel)
+                    // 获取实例
+                    val vm: LockViewModel = viewModel()
+                    viewModel = vm // 赋值给成员变量
+
+                    // 注册看门狗
+                    DisposableEffect(Unit) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_STOP) {
+                                // [核心] 当 App 进入后台时 (ON_STOP)
+                                // 如果正在锁定中，立即把它拽回来！
+                                if (vm.isLocked) {
+                                    vm.bringAppToFront()
+                                }
+                            }
+                        }
+                        // 监听整个进程的生命周期，比 Activity 更稳
+                        ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
+                        onDispose {
+                            ProcessLifecycleOwner.get().lifecycle.removeObserver(observer)
+                        }
+                    }
+
+                    AppContent(vm)
                 }
             }
         }
@@ -198,7 +229,7 @@ fun SetupScreen(onStart: (Int) -> Unit, isAccessibilityReady: Boolean) {
                 })
             }
         } else {
-            Text("已就绪", color = Color.Green, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
+            Text("已就绪", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(top = 10.dp))
         }
 
         // ⬇️⬇️⬇️ 只有在 Debug 版本才会显示这个按钮 ⬇️⬇️⬇️

@@ -231,31 +231,65 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
             ShizukuHelper.runShellCommand(cmd)
         }
     }
+    fun bringAppToFront() {
+        // 只有在锁定状态下才执行，防止误伤
+        if (isLocked) {
+            val context = getApplication<Application>()
+            val myPackage = context.packageName
+
+            // 再次确保我们是默认桌面 (防止被恶意修改)
+            if (ShizukuHelper.isShizukuAvailable() && ShizukuHelper.checkPermission(0)) {
+                ShizukuHelper.setDeviceLauncher(myPackage, "$myPackage.MainActivity")
+                // 强行启动自己
+                ShizukuHelper.forceStartHome(myPackage, "$myPackage.MainActivity")
+            }
+        }
+    }
     private fun muteAll() {
         val context = getApplication<Application>()
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         val streams = listOf(AudioManager.STREAM_RING, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM, AudioManager.STREAM_MUSIC)
+
         streams.forEach { stream ->
             val currentVol = am.getStreamVolume(stream)
             if (!prefs.contains(KEY_VOL_PREFIX + stream)) {
                 editor.putInt(KEY_VOL_PREFIX + stream, currentVol)
             }
-            am.setStreamVolume(stream, 0, 0)
+
+            // [修复] 加上 try-catch 防止 DND 模式下崩溃
+            try {
+                am.setStreamVolume(stream, 0, 0)
+            } catch (e: SecurityException) {
+                // 如果崩了，说明系统已经在 DND 模式，无法更改音量。
+                // 这其实是好事（说明已经静音了），直接忽略即可。
+                e.printStackTrace()
+            }
         }
         editor.apply()
     }
+
     private fun unmuteAll() {
         val context = getApplication<Application>()
         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
         val streams = listOf(AudioManager.STREAM_RING, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM, AudioManager.STREAM_MUSIC)
+
         streams.forEach { stream ->
             val originalVol = prefs.getInt(KEY_VOL_PREFIX + stream, -1)
             if (originalVol != -1) {
-                try { am.setStreamVolume(stream, originalVol, 0) } catch (e: Exception) {}
+                // [修复] 恢复音量时也要加 try-catch，防止解锁瞬间 DND 还没退出的情况
+                try {
+                    am.setStreamVolume(stream, originalVol, 0)
+                } catch (e: SecurityException) {
+                    e.printStackTrace()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+
+                // 无论是否恢复成功，都要把记录删掉，防止下次逻辑错乱
                 editor.remove(KEY_VOL_PREFIX + stream)
             }
         }

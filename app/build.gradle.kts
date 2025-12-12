@@ -62,4 +62,5 @@ dependencies {
     implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.6.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
+    implementation("androidx.lifecycle:lifecycle-process:2.6.2")
 }
