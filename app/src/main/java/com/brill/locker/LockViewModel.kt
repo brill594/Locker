@@ -199,26 +199,67 @@ class LockViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun saveOriginalLauncherToPrefs(): Boolean {
         val context = getApplication<Application>()
-        val pm = context.packageManager
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
-        val resolveInfo = pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
-        if (resolveInfo != null) {
-            val pkg = resolveInfo.activityInfo.packageName
-            val cls = resolveInfo.activityInfo.name
+        // ------------------------------------------------------------
+        // 策略 1: 【上帝视角】优先尝试使用 Shizuku Shell 直接读取系统配置
+        // 这是解决 Android 15 读取不准的唯一真理
+        // ------------------------------------------------------------
+        if (ShizukuHelper.isShizukuAvailable() && ShizukuHelper.checkPermission(0)) {
+            val shellResult = ShizukuHelper.getHomeActivityFromShell()
+            if (shellResult != null) {
+                val (shellPkg, shellCls) = shellResult
 
-            if (pkg != context.packageName) {
-                val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-                prefs.edit()
-                    .putString(KEY_PKG, pkg)
-                    .putString(KEY_CLS, cls)
-                    .apply()
-                return true
-            } else {
-                val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-                return prefs.contains(KEY_PKG)
+                // 只要 Shell 读出来的不是 Locker 自己，那就一定是用户设置的真桌面
+                if (shellPkg != context.packageName) {
+                    prefs.edit()
+                        .putString(KEY_PKG, shellPkg)
+                        .putString(KEY_CLS, shellCls)
+                        .apply()
+                    // 调试用，稳定后可删除
+                    // Toast.makeText(context, "Shell检测到: $shellPkg", Toast.LENGTH_SHORT).show()
+                    return true
+                } else {
+                    // 如果 Shell 读出来的是 Locker，说明 Locker 已经是默认了
+                    // 此时检查硬盘里有没有旧记录，有就复用
+                    if (prefs.contains(KEY_PKG)) return true
+                }
             }
         }
+
+        // ------------------------------------------------------------
+        // 策略 2: 【备用方案】如果 Shizuku 没连接，回落到 Java API 扫描
+        // (适用于用户还没授权 Shizuku 但想先锁定一下试试的情况，虽然不太可能)
+        // ------------------------------------------------------------
+        val pm = context.packageManager
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+
+        // 过滤黑名单
+        val invalidPackages = listOf("android", "com.android.internal.app", "com.android.settings")
+
+        // 主动扫描所有安装的 Launcher
+        val allHomeApps = pm.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+
+        // 智能筛选：
+        // 1. 优先找微软桌面 (既然你常用)
+        // 2. 找任何非 Locker、非系统的桌面
+        val targetInfo = allHomeApps.firstOrNull {
+            it.activityInfo.packageName == "com.microsoft.launcher"
+        } ?: allHomeApps.firstOrNull {
+            val pkg = it.activityInfo.packageName
+            pkg != context.packageName &&
+                    !invalidPackages.contains(pkg) &&
+                    pkg != "com.android.launcher"
+        }
+
+        if (targetInfo != null) {
+            prefs.edit()
+                .putString(KEY_PKG, targetInfo.activityInfo.packageName)
+                .putString(KEY_CLS, targetInfo.activityInfo.name)
+                .apply()
+            return true
+        }
+
         return false
     }
 

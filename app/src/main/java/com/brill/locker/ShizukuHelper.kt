@@ -38,7 +38,42 @@ object ShizukuHelper {
         if (Shizuku.isPreV11() || Shizuku.getVersion() < 11) return
         Shizuku.requestPermission(code)
     }
+    fun getHomeActivityFromShell(): Pair<String, String>? {
+        // --brief 参数让输出更简洁，方便解析
+        val cmd = "cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME"
+        val result = runShellCommand(cmd)
 
+        if (result.exitCode == 0) {
+            val output = result.stdout
+            // 输出示例：
+            // priority=0 preferredOrder=0 ... isDefault=true
+            // com.microsoft.launcher/.Launcher
+
+            // 解析逻辑：找到包含 "/" 的那一行
+            val lines = output.split("\n")
+            for (line in lines) {
+                val trimmed = line.trim()
+                if (trimmed.contains("/")) {
+                    val parts = trimmed.split("/")
+                    if (parts.size == 2) {
+                        val pkg = parts[0]
+                        var cls = parts[1]
+
+                        // 处理简写类名 (例如 .Launcher -> com.microsoft.launcher.Launcher)
+                        if (cls.startsWith(".")) {
+                            cls = pkg + cls
+                        }
+
+                        // 再次过滤无效包名 (防止 Shell 也返回 ResolverActivity)
+                        if (pkg != "android" && pkg != "com.android.internal.app") {
+                            return Pair(pkg, cls)
+                        }
+                    }
+                }
+            }
+        }
+        return null
+    }
     // --- 各种业务命令 ---
 
     // [修正] 设置 Activity 偏好 (加上 --user 0)
