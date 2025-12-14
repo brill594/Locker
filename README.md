@@ -67,7 +67,12 @@ Locker 需要配合 **Shizuku** 使用以获得必要的系统权限。
 * **Architecture**: MVVM
 * **Tech Stack**: Jetpack Compose, Coroutines, Shizuku API
 * **Compatibility**: Android 11+ (Recommended Android 14/15)
-
 ---
+
+## 📝 ToDo
+1. 解决MIUI以及HyperOS中自动fallback到三键导航和前台控制失效的问题
+2. 添加相关数据到系统屏幕健康
+3. 实现内部数据统计页
+4. 增加强度自定义选项
 
 **愿 Locker 能为你在这个喧嚣的世界里，守住一片宁静。**
